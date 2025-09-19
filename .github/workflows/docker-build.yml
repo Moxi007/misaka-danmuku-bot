@@ -1,8 +1,10 @@
 name: 构建并推送Docker镜像
 
+# 触发条件：test分支推送代码、PR、Release发布或手动触发
 on:
   push:
     branches: [test]
+    # 仅当以下文件修改时触发（避免无效构建）
     paths:
       - "*.py"
       - "handlers/**"
@@ -24,7 +26,7 @@ on:
       - "Dockerfile"
       - ".github/workflows/docker-build.yml"
   release:
-    types: [published]
+    types: [published] # 当创建新release时触发
   workflow_dispatch:
     inputs:
       push_image:
@@ -40,44 +42,56 @@ on:
         default: false
         type: boolean
 
-# 环境变量
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: lfy1680/misaka-danmuku-bot
+  IMAGE_NAME: lfy1680/misaka-danmuku-bot        
 
+# 并发控制：同一分支只允许一个构建任务运行
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# 工作流任务
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # 使用Ubuntu runner（支持多架构构建）
     timeout-minutes: 30
 
+    # 权限配置（推送镜像需要的权限）
     permissions:
       contents: read
 
     steps:
+      # 步骤1：拉取GitHub仓库代码
       - name: 拉取代码
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # 拉取完整历史，用于生成版本标签
 
+      # 步骤2：设置QEMU（多架构支持）
       - name: 设置QEMU
         uses: docker/setup-qemu-action@v3
         with:
           platforms: all
 
+      # 步骤3：环境准备
+      - name: 环境准备
+        run: |
+          docker system prune -f || true
+          docker builder prune -f || true
+
+      # 步骤4：设置Docker Buildx
       - name: 设置Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 登录 Docker Hub
+      # 步骤5：Docker Hub
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # 步骤6：提取镜像元数据
       - name: 提取镜像元数据
         id: meta
         uses: docker/metadata-action@v5
@@ -102,8 +116,10 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT
 
+      # 步骤7：构建并推送镜像
       - name: 构建并推送镜像
         id: build
+        timeout-minutes: 25
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -118,6 +134,21 @@ jobs:
           pull: true
           provenance: false
 
+      # 步骤8：构建重试
+      - name: 构建重试
+        if: failure() && steps.build.outcome == 'failure'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' && (github.event.inputs.push_image == 'true' || github.event.inputs.push_image == true || github.event_name != 'workflow_dispatch') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          no-cache: true
+          pull: true
+          provenance: false
+
+      # 步骤9：输出构建信息
       - name: 输出构建信息
         if: success()
         run: |
