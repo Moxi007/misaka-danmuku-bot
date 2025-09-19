@@ -231,13 +231,12 @@ class WebhookHandler:
             provider_ids = item.get('ProviderIds', {})
             tmdb_id = provider_ids.get('Tmdb') or provider_ids.get('TheMovieDb')
             imdb_id = provider_ids.get('Imdb')
-            tvdb_id = provider_ids.get('Tvdb') or provider_ids.get('TheTVDB')
             douban_id = provider_ids.get('Douban') or provider_ids.get('DoubanMovie')
             bangumi_id = provider_ids.get('Bangumi') or provider_ids.get('BGM')
             
             # 调试日志：显示提供商ID信息
             logger.debug(f"🔍 媒体提供商ID信息: {provider_ids}")
-            logger.debug(f"🎯 提取的Provider ID: TMDB={tmdb_id}, IMDB={imdb_id}, TVDB={tvdb_id}, Douban={douban_id}, Bangumi={bangumi_id}")
+            logger.debug(f"🎯 提取的Provider ID: TMDB={tmdb_id}, IMDB={imdb_id}, Douban={douban_id}, Bangumi={bangumi_id}")
             logger.debug(f"🎯 最终提取信息: 剧集='{series_name}', 季度={season_number}, 集数={episode_number}, 年份={year}, TMDB_ID={tmdb_id}")
             
             # 构建完整标题
@@ -259,7 +258,6 @@ class WebhookHandler:
                 "episode": str(episode_number) if episode_number else '',
                 "tmdb_id": tmdb_id or '',
                 "imdb_id": imdb_id or '',
-                "tvdb_id": tvdb_id or '',
                 "douban_id": douban_id or '',
                 "bangumi_id": bangumi_id or '',
                 "identify_matched": identify_matched,  # 添加识别词匹配标识
@@ -955,7 +953,7 @@ class WebhookHandler:
         """
         # 优先使用Provider ID作为唯一标识
         provider_ids = []
-        for provider in ['tmdb_id', 'imdb_id', 'tvdb_id', 'douban_id', 'bangumi_id']:
+        for provider in ['tmdb_id', 'imdb_id', 'douban_id', 'bangumi_id']:
             if media_info.get(provider):
                 provider_ids.append(f"{provider}:{media_info[provider]}")
         
@@ -1064,8 +1062,8 @@ class WebhookHandler:
         """使用优先级 provider 导入单个电影
         
         Args:
-            provider_id: Provider ID (tmdb_id, tvdb_id, imdb_id, douban_id, 或 bangumi_id)
-            provider_type: Provider 类型 ('tmdb', 'tvdb', 'imdb', 'douban', 'bangumi')
+            provider_id: Provider ID (tmdb_id, imdb_id, douban_id, 或 bangumi_id)
+            provider_type: Provider 类型 ('tmdb', 'imdb', 'douban', 'bangumi')
             movie_title: 电影标题（可选，用于通知显示）
         """
         try:
@@ -1216,8 +1214,8 @@ class WebhookHandler:
         """根据provider类型导入指定集数
         
         Args:
-            provider_id: Provider ID (TMDB/TVDB/IMDB/Douban/Bangumi)
-            provider_type: Provider类型 ('tmdb', 'tvdb', 'imdb', 'douban', 'bangumi')
+            provider_id: Provider ID (TMDB/IMDB/Douban/Bangumi)
+            provider_type: Provider类型 ('tmdb', 'imdb', 'douban', 'bangumi')
             season: 季度
             episodes: 集数列表
             series_name: 剧集名称（可选）
@@ -1229,7 +1227,6 @@ class WebhookHandler:
         # 根据provider类型设置搜索参数
         search_type_map = {
             'tmdb': 'tmdb',
-            'tvdb': 'tvdb', 
             'imdb': 'imdb',
             'douban': 'douban',
             'bangumi': 'bangumi',
@@ -1393,7 +1390,7 @@ class WebhookHandler:
      
     def _get_priority_provider_info(self, media_info: Dict[str, Any]) -> tuple:
         """
-        获取优先级Provider信息 (tmdb > tvdb > imdb > douban > bangumi)
+        获取优先级Provider信息 (tmdb > imdb > douban > bangumi)
         
         Args:
             media_info: 已提取的媒体信息（包含provider ID）
@@ -1401,14 +1398,10 @@ class WebhookHandler:
         Returns:
             tuple: (provider_type, provider_id, search_type)
         """
-        # 按优先级检查：tmdb > tvdb > imdb > douban > bangumi
+        # 按优先级检查：tmdb > imdb > douban > bangumi
         tmdb_id = media_info.get('tmdb_id')
         if tmdb_id:
             return 'tmdb', tmdb_id, 'tmdb'
-            
-        tvdb_id = media_info.get('tvdb_id')
-        if tvdb_id:
-            return 'tvdb', tvdb_id, 'tvdb'
             
         imdb_id = media_info.get('imdb_id')
         if imdb_id:
