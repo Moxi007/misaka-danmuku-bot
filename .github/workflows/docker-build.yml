@@ -27,7 +27,7 @@ jobs:
       - name: Prepare Docker tags and platforms
         id: prep
         run: |
-          DOCKER_IMAGE=${{ secrets.DOCKERHUB_USERNAME }}/misaka_danmu_server
+          DOCKER_IMAGE=${{ secrets.DOCKERHUB_USERNAME }}/misaka-danmuku-bot
           # 默认构建所有平台
           PLATFORMS="linux/amd64"
           # 如果是标签推送 (e.g., v1.2.3)
