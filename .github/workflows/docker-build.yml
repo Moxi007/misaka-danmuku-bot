@@ -1,53 +1,21 @@
-name: 构建并推送Docker镜像
+# .github/workflows/docker-publish.yml
+name: Publish to Docker Hub
 
-# 触发条件：test分支推送代码、PR、Release发布或手动触发
+# 触发条件：
+# 1. 当推送到 'test' 分支时
+# 2. 当推送到 'beta' 分支时
+# 3. 当创建 'v*.*.*' 格式的标签时
+# 4. 当创建新release时
 on:
   push:
-    branches: [test]
-    # 仅当以下文件修改时触发（避免无效构建）
-    paths:
-      - "*.py"
-      - "handlers/**"
-      - "callback/**"
-      - "utils/**"
-      - "app/**"
-      - "requirements.txt"
-      - "Dockerfile"
-      - ".github/workflows/docker-build.yml"
-  pull_request:
-    branches: [test]
-    paths:
-      - "*.py"
-      - "handlers/**"
-      - "callback/**"
-      - "utils/**"
-      - "app/**"
-      - "requirements.txt"
-      - "Dockerfile"
-      - ".github/workflows/docker-build.yml"
+    branches:
+      - "test"
+      - "beta"
+    tags:
+      - "v*.*.*"
   release:
-    types: [published] # 当创建新release时触发
-  workflow_dispatch:
-    inputs:
-      push_image:
-        description: "推送镜像"
-        default: true
-        type: boolean
-      no_cache:
-        description: "禁用缓存"
-        default: false
-        type: boolean
-      debug_build:
-        description: "调试模式"
-        default: false
-        type: boolean      
+    types: [published]
 
-# 并发控制：同一分支只允许一个构建任务运行
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-# 工作流任务
 jobs:
   build-and-push:
     # 在最新的 Ubuntu 虚拟机上运行
