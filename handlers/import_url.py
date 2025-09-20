@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, Mess
 from utils.api import call_danmaku_api
 from utils.permission import check_admin_permission
 from utils.title_extractor import extract_show_title_from_h1
+from utils.rate_limit import should_block_by_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -398,6 +399,13 @@ async def auto_import_movie(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 @check_admin_permission
 async def import_url_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """开始URL导入流程"""
+    # 检查流控状态
+    should_block, seconds_until_reset = should_block_by_rate_limit()
+    if should_block:
+        seconds_text = str(seconds_until_reset) if seconds_until_reset is not None else "稍后"
+        await update.message.reply_text(f"🚫 无法URL导入，当前系统处于流控状态，请{seconds_text}秒后再试")
+        return ConversationHandler.END
+        
     # 清理之前的数据并设置当前状态
     context.user_data.clear()
     context.user_data['current_state'] = URL_INPUT
@@ -876,11 +884,10 @@ def create_import_url_handler():
         },
         fallbacks=[
             CommandHandler('cancel', cancel_import_url),
-            CommandHandler('search', cancel_import_url),
-            CommandHandler('auto', cancel_import_url),
             CommandHandler('start', cancel_import_url),
             CommandHandler('help', cancel_import_url),
-            CommandHandler('url', restart_import_url),
+            CommandHandler('search', cancel_import_url),
+            CommandHandler('auto', cancel_import_url),
         ],
         name='import_url_conversation',
         persistent=False,

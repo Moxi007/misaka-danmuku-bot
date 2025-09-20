@@ -26,6 +26,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /tasks - 查看任务列表
 
 【其他】
+/users - 管理用户权限
+/identify - 管理识别词映射
 /help  - 查看帮助信息
 /cancel - 取消当前操作
 
@@ -53,6 +55,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /refresh - 刷新数据源
 /tokens - 管理API访问令牌
 /tasks - 查看任务列表
+/users - 管理用户权限
+/identify - 管理识别词映射
 
 【其他】
 /help  - 查看帮助信息
@@ -100,6 +104,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   查看、创建、删除访问令牌
 
 【📋 其他指令】
+• /users - 管理用户权限
+• /identify - 管理识别词映射
 • /help - 显示此帮助信息
 • /cancel - 取消当前操作
 • /start - 返回主菜单
@@ -129,6 +135,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 • /tokens - 管理API访问令牌
   查看、创建、删除访问令牌
+
+• /users - 管理用户权限
+  
+• /identify - 管理识别词映射
 
 【📋 其他指令】
 • /help - 显示此帮助信息

@@ -467,11 +467,19 @@ def validate_tv_series_match(tmdb_info: Dict[str, Any], series_name: str, year: 
             logger.debug(f"❌ 名称不匹配: {series_name} vs {tmdb_name}")
             return False
         
-        # 验证年份匹配（允许1年误差）
+        # 验证年份匹配：通过season_number和year推理出大概年份(year-season-1)，并允许前后1年误差
         if year:
             tmdb_year = tmdb_info.get('year', '')
-            if tmdb_year and abs(int(year) - int(tmdb_year)) > 1:
-                logger.debug(f"❌ 年份不匹配: {year} vs {tmdb_year}")
+            # 如果没有提供season_number，默认为1
+            current_season = season_number or 1
+            
+            # 计算推理年份：year - season + 1
+            inferred_year = int(year) - int(current_season) + 1
+            # 在推理年份的基础上允许前后1年误差
+            allowed_error = 1
+            
+            if tmdb_year and abs(int(tmdb_year) - inferred_year) > allowed_error:
+                logger.debug(f"❌ 年份不匹配: 推理年份={inferred_year} vs TMDB年份={tmdb_year} (允许误差: ±{allowed_error}年)")
                 return False
         
         # 验证季数匹配

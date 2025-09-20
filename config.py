@@ -13,11 +13,14 @@ load_dotenv()
 log_dir = Path("app/logs")
 log_dir.mkdir(parents=True, exist_ok=True)
 
+# 导入RotatingFileHandler以支持日志文件大小限制
+from logging.handlers import RotatingFileHandler
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_dir / "app.log"),
+        RotatingFileHandler(log_dir / "app.log", maxBytes=5*1024*1024, backupCount=1),  # 最大5MB，保留1个备份
         logging.StreamHandler()
     ]
 )

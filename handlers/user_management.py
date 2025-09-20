@@ -276,6 +276,7 @@ async def cancel_user_management(update: Update, context: ContextTypes.DEFAULT_T
     await show_users_list_as_new_message(update, context)
     return ConversationHandler.END
 
+
 def create_user_management_handler():
     """创建用户管理ConversationHandler"""
     return ConversationHandler(
@@ -300,7 +301,7 @@ def create_user_management_handler():
             ]
         },
         fallbacks=[
-            CommandHandler("cancel", cancel_user_management)
+            CommandHandler('cancel', cancel_user_management)
         ],
         per_chat=True,
         per_user=True

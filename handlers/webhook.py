@@ -14,6 +14,8 @@ from utils.tmdb_api import get_tmdb_media_details, search_tv_series_by_name_year
 from utils.api import call_danmaku_api
 from utils.security import mask_sensitive_data
 from utils.emby_name_converter import convert_emby_series_name
+from utils.blacklist_config import load_blacklist
+from utils.rate_limit import should_block_by_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -326,13 +328,29 @@ class WebhookHandler:
         except Exception as e:
             logger.error(f"❌ 发送播放通知时发生错误: {e}")
     
-    async def _process_smart_library_management(self, media_info: Dict[str, str]):
+    async def _process_smart_library_management(self, media_info: Dict[str, Any]):
         """执行智能影视库管理流程
         
         Args:
             media_info: 媒体信息
         """
         try:
+            # 使用rate_limit模块检查限流状态
+            should_block, _ = should_block_by_rate_limit()
+            if should_block:
+                return
+            
+            # 检查是否在黑名单中
+            title = media_info.get('original_title')
+            series_name = media_info.get('series_name')
+            blacklist = load_blacklist()
+
+            # 检查电影标题或电视剧名称是否在黑名单中（不区分大小写，完全匹配）
+            if (title and title.lower() in blacklist) or (series_name and series_name.lower() in blacklist):
+                blocked_title = title if title.lower() in blacklist else series_name
+                logger.info(f"🚫 {blocked_title} 在黑名单中，终止处理流程")
+                return
+            
             # 检查是否为重复播放事件
             if self._is_duplicate_play_event(media_info, cooldown_hours=self.config.webhook.play_event_cooldown_hours):
                 return  # 跳过重复处理
@@ -1514,6 +1532,9 @@ class WebhookHandler:
             skipped_count = 0
             task_ids = []  # 收集刷新操作的taskId
             
+            # 收集需要导入的集数信息，以便批量处理
+            episodes_to_import = []
+            
             for episode in episodes:
                 episode_info = episode_map.get(episode)
                 if not episode_info:
@@ -1542,9 +1563,9 @@ class WebhookHandler:
                                 logger.info(f"ℹ️ TMDB搜索未找到匹配结果: {series_name} ({year})")
                         
                         if current_tmdb_id:
-                            logger.warning(f"⚠️ 未找到第{episode}集的episodeId，尝试导入")
-                            # 当集数不存在且有TMDB ID时，尝试导入该集
-                            await self._import_single_episode(current_tmdb_id, season_num, episode)
+                            logger.warning(f"⚠️ 未找到第{episode}集的episodeId，收集到导入列表")
+                            # 收集需要导入的集数信息
+                            episodes_to_import.append((current_tmdb_id, season_num, episode))
                         else:
                             logger.info(f"ℹ️ 未找到第{episode}集的episodeId且无法获取TMDB ID，跳过导入")
                     continue
@@ -1635,91 +1656,126 @@ class WebhookHandler:
                 elif failed_count > 0:
                     # 全部失败
                     await self._send_callback_notification('refresh', media_info, 'failed', "所有集数刷新失败", task_ids=task_ids)
+            
+            # 如果有需要导入的集数，批量处理并发送合并后的通知
+            if episodes_to_import:
+                await self._import_multiple_episodes(episodes_to_import, series_name)
                 
                 logger.info(f"📊 刷新完成: 成功 {success_count}/{processed_episodes} 集，跳过 {skipped_count} 集")
                     
         except Exception as e:
             logger.error(f"❌ 刷新集数异常: {e}")
     
-    async def _import_single_episode(self, tmdb_id: str, season_num: int, episode: int):
-        """导入单个集数
+    async def _import_multiple_episodes(self, episodes_to_import: list, series_name: Optional[str] = None):
+        """批量导入多个集数，并发送合并后的通知
         
         Args:
-            tmdb_id: TMDB ID
-            season_num: 季度号
-            episode: 集数
+            episodes_to_import: 需要导入的集数列表，每个元素是(tmdb_id, season_num, episode)的元组
+            series_name: 剧集名称（用于通知）
         """
         try:
-            # 构建导入参数
-            import_params = {
-                "searchType": "tmdb",
-                "searchTerm": str(tmdb_id),
-                "mediaType": "tv_series",
-                "importMethod": "auto",
-                "season": season_num,
-                "episode": episode,
-                "originalKeyword": f"TMDB ID: {tmdb_id}"  # 添加原始关键词用于识别词匹配
-            }
+            total_success = 0
+            total_failed = 0
+            all_task_ids = []
+            imported_episodes = []
+            success_episodes = []
+            failed_episodes = []
             
-            logger.info(f"🚀 开始导入单集: TMDB {tmdb_id} S{season_num:02d}E{episode:02d}")
+            # 批量处理每个需要导入的集数
+            for tmdb_id, season_num, episode in episodes_to_import:
+                try:
+                    # 构建导入参数
+                    import_params = {
+                        "searchType": "tmdb",
+                        "searchTerm": str(tmdb_id),
+                        "mediaType": "tv_series",
+                        "importMethod": "auto",
+                        "season": season_num,
+                        "episode": episode,
+                        "originalKeyword": f"TMDB ID: {tmdb_id}"  # 添加原始关键词用于识别词匹配
+                    }
+                    
+                    logger.info(f"🚀 开始导入单集: TMDB {tmdb_id} S{season_num:02d}E{episode:02d}")
+                    
+                    # 调用导入API
+                    response = call_danmaku_api(
+                        method="POST",
+                        endpoint="/import/auto",
+                        params=import_params
+                    )
+                    
+                    imported_episodes.append((tmdb_id, season_num, episode))
+                    
+                    if response and response.get("success"):
+                        logger.info(f"✅ 单集导入成功: S{season_num:02d}E{episode:02d}")
+                        total_success += 1
+                        success_episodes.append((season_num, episode))
+                        # 从data字段中获取taskId
+                        data = response.get('data', {})
+                        task_id = data.get('taskId')
+                        if task_id:
+                            all_task_ids.append(task_id)
+                    else:
+                        logger.info(f"ℹ️ 单集可能不存在或已导入: S{season_num:02d}E{episode:02d}")
+                        total_failed += 1
+                        failed_episodes.append((season_num, episode))
+                except Exception as e:
+                    logger.error(f"❌ 导入单集异常 S{season_num:02d}E{episode:02d}: {e}")
+                    total_failed += 1
+                    failed_episodes.append((season_num, episode))
             
-            # 调用导入API
-            response = call_danmaku_api(
-                method="POST",
-                endpoint="/import/auto",
-                params=import_params
-            )
-            
-            task_ids = []
-            success_count = 0
-            failed_count = 0
-            
-            if response and response.get("success"):
-                logger.info(f"✅ 单集导入成功: S{season_num:02d}E{episode:02d}")
-                success_count = 1
-                # 从data字段中获取taskId
-                data = response.get('data', {})
-                task_id = data.get('taskId')
-                if task_id:
-                    task_ids.append(task_id)
-            else:
-                logger.info(f"ℹ️ 单集可能不存在或已导入: S{season_num:02d}E{episode:02d}")
-                failed_count = 1
-            
-            # 获取剧集名称（用于通知）
-            series_name = None
-            try:
-                tmdb_info = get_tmdb_media_details(tmdb_id, 'tv_series')
-                if tmdb_info:
-                    series_name = tmdb_info.get('name')
-            except Exception as e:
-                logger.warning(f"⚠️ 获取TMDB详细信息时出错: {e}")
-            
-            # 构建媒体信息用于回调通知
-            media_info = {
-                'Name': series_name if series_name else f"TMDB {tmdb_id} S{season_num}",
-                'Type': 'Series',
-                'ProviderId': tmdb_id,
-                'ProviderType': 'tmdb',
-                'Season': season_num,
-                'Episodes': [episode],
-                'SuccessCount': success_count,
-                'FailedCount': failed_count,
-                'TotalCount': 1
-            }
-            
-            # 添加剧集名称（如果有）
-            if series_name:
-                media_info['SeriesName'] = series_name
-            
-            # 发送回调通知，无论成功还是失败都传递task_ids
-            if success_count > 0:
-                await self._send_callback_notification('import', media_info, 'success', task_ids=task_ids)
-            else:
-                await self._send_callback_notification('import', media_info, 'failed', "单集导入失败", task_ids=task_ids)
+            # 如果有导入的集数，发送合并后的通知
+            if imported_episodes:
+                # 获取第一个集数的信息用于通知（假设所有集数属于同一剧集）
+                first_tmdb_id, first_season, _ = imported_episodes[0]
                 
+                # 获取剧集名称（用于通知）
+                tmdb_series_name = None
+                try:
+                    tmdb_info = get_tmdb_media_details(first_tmdb_id, 'tv_series')
+                    if tmdb_info:
+                        tmdb_series_name = tmdb_info.get('name')
+                except Exception as e:
+                    logger.warning(f"⚠️ 获取TMDB详细信息时出错: {e}")
+                
+                display_name = series_name or tmdb_series_name or f"TMDB {first_tmdb_id}"
+                
+                # 构建媒体信息用于回调通知
+                media_info = {
+                    'Name': display_name,
+                    'Type': 'Series',
+                    'ProviderId': first_tmdb_id,
+                    'ProviderType': 'tmdb',
+                    'Season': first_season,
+                    'Episodes': [ep for _, _, ep in imported_episodes],
+                    'SuccessCount': total_success,
+                    'FailedCount': total_failed,
+                    'TotalCount': len(imported_episodes)
+                }
+                
+                # 添加剧集名称（如果有）
+                if series_name:
+                    media_info['SeriesName'] = series_name
+                elif tmdb_series_name:
+                    media_info['SeriesName'] = tmdb_series_name
+                
+                # 构建详细的状态消息
+                # 处理task_ids参数
+                task_ids_param = None
+                if 'all_task_ids' in locals():
+                    task_ids_param = all_task_ids
+                
+                if total_success > 0 and total_failed == 0:
+                    # 全部成功
+                    await self._send_callback_notification('import', media_info, 'success', task_ids=task_ids_param)
+                elif total_success > 0 and total_failed > 0:
+                    # 部分成功
+                    await self._send_callback_notification('import', media_info, 'success', f"{total_failed} 集导入失败", task_ids=task_ids_param)
+                else:
+                    # 全部失败
+                    await self._send_callback_notification('import', media_info, 'failed', f"所有集数导入失败", task_ids=task_ids_param)
         except Exception as e:
-            logger.error(f"❌ 导入单集异常: {e}")
+            logger.error(f"❌ 批量导入集数异常: {e}")
     
     def _get_clean_media_name(self, media_info: Dict[str, Any]) -> str:
         """从emby通知信息中获取媒体名称

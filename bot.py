@@ -236,8 +236,9 @@ async def _setup_bot_commands(application: Application):
         BotCommand("refresh", "刷新数据源"),
         BotCommand("tokens", "管理API令牌"),
         BotCommand("tasks", "查看任务列表"),
-        BotCommand("users", "管理用户权限（仅管理员）"),
-        BotCommand("identify", "管理识别词映射（仅管理员）"),
+        BotCommand("users", "管理用户权限"),
+        BotCommand("identify", "管理识别词映射"),
+        BotCommand("blacklist", "管理webhook黑名单"),
         BotCommand("help", "查看帮助信息"),
         BotCommand("cancel", "取消当前操作")
     ]
@@ -284,7 +285,9 @@ def _setup_handlers(application, handlers_module, callback_module):
     # 导入import_url处理器
     from handlers.import_url import create_import_url_handler
     
-
+    # 导入blacklist管理相关处理器函数
+    from handlers.blacklist_management import blacklist_command
+    from handlers.blacklist_management import create_blacklist_handler
 
     # 创建import_auto回调处理器（需要在ConversationHandler之前定义）
     import_auto_callback_handler = CallbackQueryHandler(
@@ -313,7 +316,7 @@ def _setup_handlers(application, handlers_module, callback_module):
             CommandHandler("search", _wrap_conversation_entry_point(search_media)),
             CommandHandler("auto", _wrap_conversation_entry_point(import_auto)),
             CommandHandler("start", _wrap_with_session_management(start)),
-            CommandHandler("help", _wrap_with_session_management(help_command))
+            CommandHandler("help", _wrap_with_session_management(help_command)),
         ],
     )
     application.add_handler(search_handler)
@@ -338,7 +341,6 @@ def _setup_handlers(application, handlers_module, callback_module):
             ],
         },
         fallbacks=[
-            CommandHandler("cancel", _wrap_with_session_management(cancel_episode_input)),
             CommandHandler("search", _wrap_conversation_entry_point(search_media)),
             CommandHandler("auto", _wrap_conversation_entry_point(import_auto)),
             CommandHandler("start", _wrap_with_session_management(start)),
@@ -411,7 +413,6 @@ def _setup_handlers(application, handlers_module, callback_module):
             # )],
         },
         fallbacks=[
-            CommandHandler("cancel", _wrap_with_session_management(cancel)),
             CommandHandler("search", _wrap_conversation_entry_point(search_media)),
             CommandHandler("auto", _wrap_conversation_entry_point(import_auto)),
             CommandHandler("start", _wrap_with_session_management(start)),
@@ -558,7 +559,6 @@ def _setup_handlers(application, handlers_module, callback_module):
             ],
         },
         fallbacks=[
-            CommandHandler("cancel", _wrap_with_session_management(identify_cancel)),
             CommandHandler("search", _wrap_conversation_entry_point(search_media)),
             CommandHandler("auto", _wrap_conversation_entry_point(import_auto)),
             CommandHandler("start", _wrap_with_session_management(start)),
@@ -569,6 +569,11 @@ def _setup_handlers(application, handlers_module, callback_module):
     )
     application.add_handler(identify_handler)
     current_handlers["identify_handler"] = identify_handler
+    
+    # 导入并注册blacklist管理处理器
+    blacklist_handler = create_blacklist_handler()
+    application.add_handler(blacklist_handler)
+    current_handlers["blacklist_handler"] = blacklist_handler
 
 
 async def init_bot() -> Application:
@@ -618,7 +623,17 @@ async def init_bot() -> Application:
     except Exception as e:
         logger.error(f"❌ 识别词配置文件初始化异常: {e}")
 
-    # 步骤7: 设置webhook处理器的Bot实例
+    # 步骤7: 初始化黑名单配置文件
+    try:
+        from utils.blacklist_config import initialize_blacklist_config
+        if initialize_blacklist_config():
+            logger.info("✅ 黑名单配置文件初始化成功")
+        else:
+            logger.warning("⚠️ 黑名单配置文件初始化失败")
+    except Exception as e:
+        logger.error(f"❌ 黑名单配置文件初始化异常: {e}")
+
+    # 步骤8: 设置webhook处理器的Bot实例
     try:
         from handlers.webhook import set_bot_instance
         set_bot_instance(application.bot)

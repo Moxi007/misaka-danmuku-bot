@@ -4,6 +4,7 @@ from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, Mess
 from utils.api import call_danmaku_api
 from utils.permission import check_admin_permission
 from handlers.import_url import search_video_by_keyword
+from utils.rate_limit import should_block_by_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,13 @@ REFRESH_KEYWORD_INPUT, REFRESH_ANIME_SELECT, REFRESH_SOURCE_SELECT, REFRESH_EPIS
 @check_admin_permission
 async def refresh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理/refresh命令"""
+    # 检查流控状态
+    should_block, seconds_until_reset = should_block_by_rate_limit()
+    if should_block:
+        seconds_text = str(seconds_until_reset) if seconds_until_reset is not None else "稍后"
+        await update.message.reply_text(f"🚫 无法执行刷新，当前系统处于流控状态，请{seconds_text}秒后再试")
+        return ConversationHandler.END
+        
     # 获取命令参数
     args = context.args
     
