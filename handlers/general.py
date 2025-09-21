@@ -3,7 +3,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from utils.permission import check_user_permission, is_admin
 
 @check_user_permission
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """发送欢迎消息和指令列表"""
     user_id = update.effective_user.id
     is_user_admin = is_admin(user_id)
@@ -154,8 +154,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(help_text)
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """取消当前对话流程"""
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """取消当前对话"""
     context.user_data.clear()
     await update.message.reply_text("✅ 已取消当前操作", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END

@@ -4,16 +4,13 @@
 import logging
 from typing import Dict, Any
 from telegram import Update, ReplyKeyboardRemove
-from telegram.ext import ContextTypes, ConversationHandler
+from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters
 from utils.permission import check_user_permission, is_admin
+from utils.handlers_utils import wrap_conversation_entry_point, wrap_with_session_management
+from utils.handlers_fallbacks import get_global_fallbacks
+from utils.conversation_states import IDENTIFY_ORIGINAL_NAME, IDENTIFY_ORIGINAL_SEASON, IDENTIFY_TARGET_NAME, IDENTIFY_TARGET_SEASON
 
 logger = logging.getLogger(__name__)
-
-# 对话状态常量
-IDENTIFY_ORIGINAL_NAME = 0
-IDENTIFY_ORIGINAL_SEASON = 1
-IDENTIFY_TARGET_NAME = 2
-IDENTIFY_TARGET_SEASON = 3
 
 @check_user_permission
 async def identify_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -265,3 +262,41 @@ async def add_identify_mapping(mapping_rule: str) -> bool:
     except Exception as e:
         logger.error(f"❌ 添加识别词映射规则失败: {e}")
         return False
+
+
+def create_identify_handler():
+    """创建识别词管理对话处理器"""
+    return ConversationHandler(
+        entry_points=[CommandHandler("identify", wrap_conversation_entry_point(identify_command))],
+        states={
+            IDENTIFY_ORIGINAL_NAME: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    wrap_with_session_management(identify_original_name_input)
+                )
+            ],
+            IDENTIFY_ORIGINAL_SEASON: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    wrap_with_session_management(identify_original_season_input)
+                )
+            ],
+            IDENTIFY_TARGET_NAME: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    wrap_with_session_management(identify_target_name_input)
+                )
+            ],
+            IDENTIFY_TARGET_SEASON: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    wrap_with_session_management(identify_target_season_input)
+                )
+            ],
+        },
+        fallbacks=get_global_fallbacks(),
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
+        persistent=False
+    )

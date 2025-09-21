@@ -2,7 +2,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 import logging
 from handlers.user_management import (
-    show_users_list,
+    users_command,
     start_add_user,
     start_remove_user,
     confirm_remove_user,
@@ -22,7 +22,7 @@ async def handle_user_management_callback(update: Update, context: ContextTypes.
             await start_remove_user(update, context)
         elif callback_data == "refresh_users":
             await update.callback_query.answer("🔄 刷新中...")
-            await show_users_list(update, context)
+            await users_command(update, context)
         elif callback_data.startswith("confirm_remove:"):
             await confirm_remove_user(update, context)
         elif callback_data == "cancel_remove":

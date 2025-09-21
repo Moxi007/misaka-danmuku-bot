@@ -1,10 +1,10 @@
-import logging
 import asyncio
 import importlib
 import os
 import sys
+import signal
+import logging
 from pathlib import Path
-from typing import Dict, List, Optional
 from watchdog.observers import Observer
 from watchdog.events import (
     FileSystemEventHandler,
@@ -30,11 +30,6 @@ from telegram.ext import (
 )
 
 # ------------------------------
-# 轮询管理器导入
-# ------------------------------
-
-
-# ------------------------------
 # 全局配置常量
 # ------------------------------
 # 热更新监听目录/文件（核心业务逻辑相关）
@@ -50,10 +45,7 @@ EXCLUDE_PATTERNS = [
     ".log", ".swp", ".tmp"                  # 日志/临时文件
 ]
 # 全局存储：当前已注册的处理器（类型注解用字符串"Handler"避免导入依赖）
-current_handlers: Dict[str, "Handler"] = {}
-# 对话状态常量（仅保留搜索媒体相关）
-SEARCH_MEDIA = 0
-SEARCH_RESULTS = 1
+current_handlers = {}
 
 # ------------------------------
 # 日志配置（支持 Docker 日志查看）
@@ -198,7 +190,7 @@ class CodeChangeHandler(FileSystemEventHandler):
         if not current_handlers:
             logger.debug("ℹ️ No old handlers to remove")
             return
-
+        
         for handler_name, handler in current_handlers.items():
             self.application.remove_handler(handler)
             logger.debug(f"ℹ️ Removed old handler: {handler_name}")
@@ -249,187 +241,86 @@ async def _setup_bot_commands(application: Application):
     except Exception as e:
         logger.error(f"❌ Failed to set bot commands: {e}")
 
-def _wrap_with_session_management(handler_func):
-    """包装处理器函数"""
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        return await handler_func(update, context)
-    return wrapper
+# 从重构后的模块导入处理器创建函数
+from handlers.import_media import (
+    create_search_handler,
+    create_import_auto_handler,
+    create_episode_input_handler
+)
 
-def _wrap_conversation_entry_point(handler_func):
-    """包装对话入口点处理器"""
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        return await handler_func(update, context)
-    return wrapper
+from handlers.identify_management import create_identify_handler
+
+# 从handlers模块导入通用处理器
+from handlers.general import start_command, help_command, cancel_command
+
+# 从utils目录导入工具函数
+from utils.handlers_fallbacks import get_global_fallbacks, get_minimal_fallbacks
+from utils.handlers_utils import wrap_conversation_entry_point, wrap_with_session_management
 
 def _setup_handlers(application, handlers_module, callback_module):
-    """通用的处理器设置函数"""
-    start = handlers_module.start
-    help_command = handlers_module.help_command
-    cancel = handlers_module.cancel
-    search_media = handlers_module.search_media
-    search_media_input = handlers_module.search_media_input
-    import_auto = handlers_module.import_auto
-    import_auto_keyword_input = handlers_module.import_auto_keyword_input
-    import_auto_id_input = handlers_module.import_auto_id_input
-    import_auto_season_selection = handlers_module.import_auto_season_selection
-    # import_auto_season_input = handlers_module.import_auto_season_input  # 已移除
-# import_auto_episode_input = handlers_module.import_auto_episode_input  # 已移除
-    handle_import_callback = callback_module.handle_import_callback
-    handle_get_episode_callback = callback_module.handle_get_episode_callback
-    handle_episode_range_input = callback_module.handle_episode_range_input
-    cancel_episode_input = callback_module.cancel_episode_input
-    handle_import_auto_callback = callback_module.handle_import_auto_callback
-    handle_search_type_callback = callback_module.handle_search_type_callback
-    handle_media_type_callback = callback_module.handle_media_type_callback
-    
-    # 导入import_url处理器
-    from handlers.import_url import create_import_url_handler
-    
-    # 导入blacklist管理相关处理器函数
-    from handlers.blacklist_management import blacklist_command
-    from handlers.blacklist_management import create_blacklist_handler
-
-    # 创建import_auto回调处理器（需要在ConversationHandler之前定义）
-    import_auto_callback_handler = CallbackQueryHandler(
-        _wrap_with_session_management(handle_import_auto_callback),
-        pattern=r'{"action": "import_auto_.*"}'
-    )
-
-    # 创建会话处理器
-    search_handler = ConversationHandler(
-        entry_points=[CommandHandler("search", _wrap_conversation_entry_point(search_media))],
-        states={
-            SEARCH_MEDIA: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND, 
-                    _wrap_with_session_management(search_media_input)
-                )
-            ],
-            SEARCH_RESULTS: [
-                # 在搜索结果状态下，用户可以点击按钮或取消
-                # 按钮点击由独立的CallbackQueryHandler处理
-                CommandHandler("cancel", _wrap_with_session_management(cancel))
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", _wrap_with_session_management(cancel)),
-            CommandHandler("search", _wrap_conversation_entry_point(search_media)),
-            CommandHandler("auto", _wrap_conversation_entry_point(import_auto)),
-            CommandHandler("start", _wrap_with_session_management(start)),
-            CommandHandler("help", _wrap_with_session_management(help_command)),
-        ],
-    )
+    """通用的处理器设置函数，使用模块化的处理器创建函数"""
+    # 1. 注册会话处理器
+    # 搜索处理器
+    search_handler = create_search_handler()
     application.add_handler(search_handler)
     current_handlers["search_handler"] = search_handler
-
-    # 创建集数输入会话处理器
-    episode_input_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(
-            _wrap_conversation_entry_point(handle_get_episode_callback),
-            pattern=r'{"(action|a)": "(start_input_range|get_episodes|get_media_episode|switch_episode_page)".*}'
-        )],  # 通过"输入集数区间"回调按钮、"获取分集"按钮或分页按钮触发
-        states={
-            1: [
-                MessageHandler(  # INPUT_EPISODE_RANGE = 1
-                    filters.TEXT & ~filters.COMMAND,
-                    _wrap_with_session_management(handle_episode_range_input)
-                ),
-                CallbackQueryHandler(  # 处理分页按钮回调
-                    _wrap_with_session_management(handle_get_episode_callback),
-                    pattern=r'^.*"switch_episode_page".*$'
-                )
-            ],
-        },
-        fallbacks=[
-            CommandHandler("search", _wrap_conversation_entry_point(search_media)),
-            CommandHandler("auto", _wrap_conversation_entry_point(import_auto)),
-            CommandHandler("start", _wrap_with_session_management(start)),
-            CommandHandler("help", _wrap_with_session_management(help_command))
-        ],
-        # 使用默认的 per_* 设置以避免混合处理器类型的警告
-        per_chat=True,   # 每个聊天独立跟踪对话状态
-        per_user=True,   # 每个用户独立跟踪对话状态
-    )
-    application.add_handler(episode_input_handler)
-    current_handlers["episode_input_handler"] = episode_input_handler
-
-    # 创建import_auto会话处理器
-    import_auto_handler = ConversationHandler(
-        entry_points=[CommandHandler("auto", _wrap_conversation_entry_point(import_auto))],
-        states={
-            1: [CallbackQueryHandler(  # IMPORT_AUTO_SEARCH_TYPE = 1
-                _wrap_with_session_management(handle_search_type_callback)
-            )],
-            2: [
-                MessageHandler(  # IMPORT_AUTO_KEYWORD_INPUT = 2
-                    filters.TEXT & ~filters.COMMAND,
-                    _wrap_with_session_management(import_auto_keyword_input)
-                ),
-                CallbackQueryHandler(_wrap_with_session_management(handle_media_type_callback)),
-                CallbackQueryHandler(  # Handle all import_auto related callbacks
-                    _wrap_with_session_management(handle_import_auto_callback),
-                    pattern=r'{"action": "import_auto_.*"}'
-                )
-            ],
-            3: [
-                MessageHandler(  # IMPORT_AUTO_ID_INPUT = 3
-                    filters.TEXT & ~filters.COMMAND,
-                    _wrap_with_session_management(import_auto_id_input)
-                ),
-                CallbackQueryHandler(  # Handle all import_auto related callbacks
-                    _wrap_with_session_management(handle_import_auto_callback),
-                    pattern=r'{"action": "import_auto_.*"}'
-                )
-            ],
-            4: [  # IMPORT_AUTO_SEASON_SELECTION = 4
-                CallbackQueryHandler(
-                    _wrap_with_session_management(handle_import_auto_callback),
-                    pattern=r'(season_\d+|cancel|{"action": "import_auto_.*"})'
-                )
-            ],
-            # 4: [  # IMPORT_AUTO_SEASON_INPUT = 4（已移除）
-            #     MessageHandler(
-            #         filters.TEXT & ~filters.COMMAND,
-            #         _wrap_with_session_management(import_auto_season_input)
-            #     ),
-            #     CallbackQueryHandler(
-            #         _wrap_with_session_management(handle_import_auto_callback),
-            #         pattern=r'{"action": "import_auto_.*"}'
-            #     )
-            # ],
-            # 5: [  # IMPORT_AUTO_EPISODE_INPUT = 5（已移除）
-            #     MessageHandler(
-            #         filters.TEXT & ~filters.COMMAND,
-            #         _wrap_with_session_management(import_auto_episode_input)
-            #     ),
-            #     CallbackQueryHandler(
-            #         _wrap_with_session_management(handle_import_auto_callback),
-            #         pattern=r'{"action": "(continue_season_import|continue_episode_import|finish_import)".*}'
-            #     )
-            # ],
-            # 6: [CallbackQueryHandler(  # IMPORT_AUTO_METHOD_SELECTION = 6（已移除）
-            #     _wrap_with_session_management(handle_import_auto_callback),
-            #     pattern=r'{"action": "import_auto_method".*}'
-            # )],
-        },
-        fallbacks=[
-            CommandHandler("search", _wrap_conversation_entry_point(search_media)),
-            CommandHandler("auto", _wrap_conversation_entry_point(import_auto)),
-            CommandHandler("start", _wrap_with_session_management(start)),
-            CommandHandler("help", _wrap_with_session_management(help_command))
-        ],
-        allow_reentry=True,  # 允许重新进入对话
-        # 使用默认的 per_* 设置以避免混合处理器类型的警告
-        per_chat=True,       # 每个聊天独立跟踪对话状态
-        per_user=True,       # 每个用户独立跟踪对话状态
-    )
+    
+    # 自动导入处理器
+    import_auto_handler = create_import_auto_handler()
     application.add_handler(import_auto_handler)
     current_handlers["import_auto_handler"] = import_auto_handler
-
-    # 创建命令处理器
-    start_handler = CommandHandler("start", start)
-    help_handler = CommandHandler("help", help_command)
-    cancel_handler = CommandHandler("cancel", cancel)
+    
+    # 识别词处理器
+    identify_handler = create_identify_handler()
+    application.add_handler(identify_handler)
+    current_handlers["identify_handler"] = identify_handler
+    
+    # 集数输入处理器
+    episode_input_handler = create_episode_input_handler()
+    application.add_handler(episode_input_handler)
+    current_handlers["episode_input_handler"] = episode_input_handler
+    
+    # 2. 导入并注册其他处理器
+    # URL导入处理器
+    from handlers.import_url import create_import_url_handler
+    import_url_handler = create_import_url_handler()
+    application.add_handler(import_url_handler)
+    current_handlers["import_url_handler"] = import_url_handler
+    
+    # Token管理处理器
+    from handlers.token_management import create_token_management_handler
+    token_management_handler = create_token_management_handler()
+    application.add_handler(token_management_handler)
+    current_handlers["token_management_handler"] = token_management_handler
+    
+    # 刷新数据源处理器
+    from handlers.refresh_sources import create_refresh_handler
+    refresh_handler = create_refresh_handler()
+    application.add_handler(refresh_handler)
+    current_handlers["refresh_handler"] = refresh_handler
+    
+    # 用户管理处理器
+    from handlers.user_management import create_user_management_handler
+    user_management_handler = create_user_management_handler()
+    application.add_handler(user_management_handler)
+    current_handlers["user_management_handler"] = user_management_handler
+    
+    # 任务管理处理器
+    from handlers.tasks import create_tasks_handler
+    tasks_handler = create_tasks_handler()
+    application.add_handler(tasks_handler)
+    current_handlers["tasks_handler"] = tasks_handler
+    
+    # 黑名单管理处理器
+    from handlers.blacklist_management import create_blacklist_handler
+    blacklist_handler = create_blacklist_handler()
+    application.add_handler(blacklist_handler)
+    current_handlers["blacklist_handler"] = blacklist_handler
+    
+    # 3. 注册通用命令处理器
+    start_handler = CommandHandler("start", wrap_with_session_management(start_command))
+    help_handler = CommandHandler("help", wrap_with_session_management(help_command))
+    cancel_handler = CommandHandler("cancel", wrap_with_session_management(cancel_command))
     
     application.add_handler(start_handler)
     application.add_handler(help_handler)
@@ -438,143 +329,61 @@ def _setup_handlers(application, handlers_module, callback_module):
     current_handlers["start_handler"] = start_handler
     current_handlers["help_handler"] = help_handler
     current_handlers["cancel_handler"] = cancel_handler
-
-    # 创建回调处理器
+    
+    # 4. 注册回调处理器
+    # 导入媒体回调处理器
+    from callback.import_media import handle_import_callback
     import_callback_handler = CallbackQueryHandler(
-        _wrap_with_session_management(handle_import_callback),
+        wrap_with_session_management(handle_import_callback),
         pattern=r'{"action": "import_media".*}'
     )
     application.add_handler(import_callback_handler)
     current_handlers["import_callback_handler"] = import_callback_handler
-
-    # 添加搜索分页回调处理器
+    
+    # 搜索分页回调处理器
     from callback.import_media import handle_search_page
-
-    # 添加搜索分页回调处理器
     search_page_handler = CallbackQueryHandler(
-        _wrap_with_session_management(handle_search_page),
+        wrap_with_session_management(handle_search_page),
         pattern=r'{"action": "search_page".*}'
     )
     application.add_handler(search_page_handler)
     current_handlers["search_page_handler"] = search_page_handler
-
+    
+    # 获取集数回调处理器
+    from callback.import_media import handle_get_episode_callback
     get_episode_callback_handler = CallbackQueryHandler(
-        _wrap_with_session_management(handle_get_episode_callback),
+        wrap_with_session_management(handle_get_episode_callback),
         pattern=r'{"(action|a)": "(get_media_episode|switch_episode_page|start_input_range)".*}'
     )
     application.add_handler(get_episode_callback_handler)
     current_handlers["get_episode_callback_handler"] = get_episode_callback_handler
-
-    # 添加import_auto回调处理器到application
+    
+    # 自动导入回调处理器
+    from callback.import_media import handle_import_auto_callback
+    import_auto_callback_handler = CallbackQueryHandler(
+        wrap_with_session_management(handle_import_auto_callback),
+        pattern=r'{"action": "import_auto_.*"}'
+    )
     application.add_handler(import_auto_callback_handler)
     current_handlers["import_auto_callback_handler"] = import_auto_callback_handler
     
-    # 创建并注册import_url处理器
-    import_url_handler = create_import_url_handler()
-    application.add_handler(import_url_handler)
-    current_handlers["import_url_handler"] = import_url_handler
-    
-    # 导入并注册token管理处理器
-    from handlers.token_management import create_token_management_handler
-    token_management_handler = create_token_management_handler()
-    application.add_handler(token_management_handler)
-    current_handlers["token_management_handler"] = token_management_handler
-    
-    # 导入并注册refresh处理器
-    from handlers.refresh_sources import create_refresh_handler
-    refresh_handler = create_refresh_handler()
-    application.add_handler(refresh_handler)
-    current_handlers["refresh_handler"] = refresh_handler
-    
-    # 导入并注册refresh回调处理器
+    # 刷新回调处理器
     from callback.refresh_sources import handle_refresh_callback_query
     refresh_callback_handler = CallbackQueryHandler(
-        _wrap_with_session_management(handle_refresh_callback_query),
+        wrap_with_session_management(handle_refresh_callback_query),
         pattern=r'refresh_(full|episode)_.*'
     )
     application.add_handler(refresh_callback_handler)
     current_handlers["refresh_callback_handler"] = refresh_callback_handler
     
-    # 导入并注册用户管理处理器
-    from handlers.user_management import create_user_management_handler
-    user_management_handler = create_user_management_handler()
-    application.add_handler(user_management_handler)
-    current_handlers["user_management_handler"] = user_management_handler
-    
-    # 导入并注册tasks处理器
-    from handlers.tasks import create_tasks_handler
-    tasks_handler = create_tasks_handler()
-    application.add_handler(tasks_handler)
-    current_handlers["tasks_handler"] = tasks_handler
-    
-    # 导入并注册tasks回调处理器
+    # 任务回调处理器
     from callback.tasks import handle_tasks_callback
     tasks_callback_handler = CallbackQueryHandler(
-        _wrap_with_session_management(handle_tasks_callback),
+        wrap_with_session_management(handle_tasks_callback),
         pattern=r'tasks_(refresh|status)_.*'
     )
     application.add_handler(tasks_callback_handler)
     current_handlers["tasks_callback_handler"] = tasks_callback_handler
-    
-    # 导入并注册identify管理处理器
-    from handlers.identify_management import (
-        identify_command,
-        identify_original_name_input,
-        identify_original_season_input,
-        identify_target_name_input,
-        identify_target_season_input,
-        identify_cancel,
-        IDENTIFY_ORIGINAL_NAME,
-        IDENTIFY_ORIGINAL_SEASON,
-        IDENTIFY_TARGET_NAME,
-        IDENTIFY_TARGET_SEASON
-    )
-    
-    identify_handler = ConversationHandler(
-        entry_points=[CommandHandler("identify", _wrap_conversation_entry_point(identify_command))],
-        states={
-            IDENTIFY_ORIGINAL_NAME: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    _wrap_with_session_management(identify_original_name_input)
-                )
-            ],
-            IDENTIFY_ORIGINAL_SEASON: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    _wrap_with_session_management(identify_original_season_input)
-                )
-            ],
-            IDENTIFY_TARGET_NAME: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    _wrap_with_session_management(identify_target_name_input)
-                )
-            ],
-            IDENTIFY_TARGET_SEASON: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    _wrap_with_session_management(identify_target_season_input)
-                )
-            ],
-        },
-        fallbacks=[
-            CommandHandler("search", _wrap_conversation_entry_point(search_media)),
-            CommandHandler("auto", _wrap_conversation_entry_point(import_auto)),
-            CommandHandler("start", _wrap_with_session_management(start)),
-            CommandHandler("help", _wrap_with_session_management(help_command))
-        ],
-        per_chat=True,
-        per_user=True,
-    )
-    application.add_handler(identify_handler)
-    current_handlers["identify_handler"] = identify_handler
-    
-    # 导入并注册blacklist管理处理器
-    blacklist_handler = create_blacklist_handler()
-    application.add_handler(blacklist_handler)
-    current_handlers["blacklist_handler"] = blacklist_handler
-
 
 async def init_bot() -> Application:
     """创建机器人应用实例，并完成初始处理器注册"""
@@ -593,7 +402,6 @@ async def init_bot() -> Application:
     # 配置网络重试机制和getUpdates专用连接池
     builder = builder.get_updates_connect_timeout(config_manager.telegram.connect_timeout).get_updates_read_timeout(config_manager.telegram.read_timeout).get_updates_pool_timeout(config_manager.telegram.pool_timeout).get_updates_connection_pool_size(config_manager.telegram.connection_pool_size)
     
-    # 配置代理（基于Docker环境变量）
     if config_manager.proxy and config_manager.proxy.enabled:
         proxy_url = config_manager.proxy.url
         logger.info(f"🌐 Using proxy from Docker environment: {proxy_url}")
@@ -670,8 +478,6 @@ def start_file_observer(application: Application) -> Observer:
 # 4. 主程序入口（机器人启动+热更新服务）
 # ------------------------------
 if __name__ == "__main__":
-    import signal
-    
     # 全局变量用于存储需要清理的资源
     file_observer = None
     application = None
@@ -737,15 +543,12 @@ if __name__ == "__main__":
 
         logger.info("📡 Bot has started listening for commands (press Ctrl+C to exit gracefully)")
         
-
-        
         # 启动bot应用
         loop.run_until_complete(application.run_polling())
         
     except Exception as e:
         logger.error(f"❌ Bot failed to start! Error: {str(e)}", exc_info=True)
         # 在异常情况下手动清理资源（仅在事件循环未关闭时）
-
         
         if file_observer is not None:
             try:
@@ -757,7 +560,7 @@ if __name__ == "__main__":
     
     finally:
         # 最终清理阶段
-        if application is not None and not loop.is_closed():
+        if application is not None and 'loop' in locals() and not loop.is_closed():
             try:
                 loop.run_until_complete(application.shutdown())
                 logger.info("🚀 Bot application shut down")

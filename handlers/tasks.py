@@ -138,4 +138,5 @@ def create_tasks_handler():
     """
     创建tasks命令处理器
     """
-    return CommandHandler("tasks", tasks_command)
+    from utils.handlers_utils import wrap_conversation_entry_point
+    return CommandHandler("tasks", wrap_conversation_entry_point(tasks_command))

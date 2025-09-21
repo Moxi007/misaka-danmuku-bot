@@ -3,12 +3,9 @@ from telegram.ext import ContextTypes, ConversationHandler
 import logging
 from utils.api import call_danmaku_api
 from utils.permission import check_user_permission
+from utils.conversation_states import TOKEN_NAME_INPUT, VALIDITY_PERIOD_SELECT
 
 logger = logging.getLogger(__name__)
-
-# 状态常量
-TOKEN_NAME_INPUT = 1
-VALIDITY_PERIOD_SELECT = 2
 
 # 有效期选项
 VALIDITY_PERIODS = [

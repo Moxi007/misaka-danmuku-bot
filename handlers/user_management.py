@@ -1,14 +1,13 @@
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-import logging
 from config import ConfigManager
 from utils.permission import check_admin_permission
+from utils.conversation_states import USER_ID_INPUT, CONFIRM_ACTION
+from utils.handlers_utils import wrap_conversation_entry_point
+from utils.handlers_fallbacks import get_global_fallbacks
 
 logger = logging.getLogger(__name__)
-
-# 定义状态
-USER_ID_INPUT = 1
-CONFIRM_ACTION = 2
 
 async def show_users_list_as_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """发送新消息显示用户列表（用于添加用户后）"""
@@ -64,7 +63,7 @@ async def show_users_list_as_new_message(update: Update, context: ContextTypes.D
         await update.message.reply_text("❌ 获取用户列表失败")
 
 @check_admin_permission
-async def show_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """显示用户管理界面"""
     try:
         config_manager = ConfigManager()
@@ -251,7 +250,7 @@ async def confirm_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE
     success = config_manager.remove_allowed_user(user_id)
     if success:
         # 成功删除用户后，直接显示更新后的用户列表
-        await show_users_list(update, context)
+        await users_command(update, context)
     else:
         await update.callback_query.edit_message_text(
             f"❌ 移除用户 `{user_id}` 失败",
@@ -265,7 +264,7 @@ async def cancel_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """取消删除用户"""
     await update.callback_query.answer()
     # 取消删除操作后，直接显示用户列表
-    await show_users_list(update, context)
+    await users_command(update, context)
     return ConversationHandler.END
 
 @check_admin_permission
@@ -281,10 +280,10 @@ def create_user_management_handler():
     """创建用户管理ConversationHandler"""
     return ConversationHandler(
         entry_points=[
-            CommandHandler("users", show_users_list),
+            CommandHandler("users", wrap_conversation_entry_point(users_command)),
             CallbackQueryHandler(start_add_user, pattern="^add_user$"),
             CallbackQueryHandler(start_remove_user, pattern="^remove_user$"),
-            CallbackQueryHandler(lambda u, c: show_users_list(u, c), pattern="^refresh_users$")
+            CallbackQueryHandler(lambda u, c: users_command(u, c), pattern="^refresh_users$")
         ],
         states={
             USER_ID_INPUT: [
@@ -292,17 +291,17 @@ def create_user_management_handler():
                     filters.TEXT & ~filters.COMMAND,
                     handle_user_id_input
                 ),
-                CommandHandler("users", show_users_list)
+                CommandHandler("users", wrap_conversation_entry_point(users_command))
             ],
             CONFIRM_ACTION: [
                 CallbackQueryHandler(confirm_remove_user, pattern="^confirm_remove:.*$"),
                 CallbackQueryHandler(cancel_remove_user, pattern="^cancel_remove$"),
-                CommandHandler("users", show_users_list)
+                CommandHandler("users", wrap_conversation_entry_point(users_command))
             ]
         },
-        fallbacks=[
-            CommandHandler('cancel', cancel_user_management)
-        ],
+        fallbacks=get_global_fallbacks(),
         per_chat=True,
-        per_user=True
+        per_user=True,
+        allow_reentry=True,
+        persistent=False
     )

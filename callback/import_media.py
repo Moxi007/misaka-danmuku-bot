@@ -6,18 +6,10 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 from utils.api import call_danmaku_api
 from utils.permission import check_user_permission
+from utils.conversation_states import EPISODES_PER_PAGE, INPUT_EPISODE_RANGE, CALLBACK_DATA_MAX_LEN, IMPORT_AUTO_KEYWORD_INPUT, IMPORT_AUTO_ID_INPUT
 
 # 初始化日志
 logger = logging.getLogger(__name__)
-# 对话状态常量
-EPISODES_PER_PAGE = 10  # 每页显示分集数量
-INPUT_EPISODE_RANGE = 1  # 集数输入对话状态
-CALLBACK_DATA_MAX_LEN = 64  # Telegram Bot API限制
-IMPORT_AUTO_KEYWORD_INPUT = 2  # 关键词输入状态
-IMPORT_AUTO_ID_INPUT = 3  # ID输入状态
-# IMPORT_AUTO_SEASON_INPUT = 4  # 季度输入状态（已移除）
-# IMPORT_AUTO_EPISODE_INPUT = 5  # 分集输入状态（已移除）
-# IMPORT_AUTO_METHOD_SELECTION = 6  # 导入方式选择状态（已移除）
 
 
 @check_user_permission

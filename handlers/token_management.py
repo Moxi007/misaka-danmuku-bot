@@ -3,12 +3,11 @@ from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, Call
 import logging
 from utils.api import call_danmaku_api
 from utils.permission import check_admin_permission
+from utils.conversation_states import TOKEN_NAME_INPUT, VALIDITY_PERIOD_SELECT
+from utils.handlers_utils import wrap_conversation_entry_point
+from utils.handlers_fallbacks import get_global_fallbacks
 
 logger = logging.getLogger(__name__)
-
-# 状态常量
-TOKEN_NAME_INPUT = 1
-VALIDITY_PERIOD_SELECT = 2
 
 # 有效期选项
 VALIDITY_PERIODS = [
@@ -21,7 +20,7 @@ VALIDITY_PERIODS = [
 ]
 
 @check_admin_permission
-async def show_tokens_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def tokens_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """显示tokens列表"""
     try:
         # 调用API获取tokens列表
@@ -144,7 +143,7 @@ def create_token_management_handler():
     
     return ConversationHandler(
         entry_points=[
-            CommandHandler('tokens', show_tokens_list),
+            CommandHandler('tokens', wrap_conversation_entry_point(tokens_command)),
             CallbackQueryHandler(handle_token_callback_query, pattern=r'^add_token$'),
             CallbackQueryHandler(handle_token_callback_query, pattern=r'^(toggle_token:|delete_token:|confirm_delete:|cancel_delete)')
         ],
@@ -156,11 +155,10 @@ def create_token_management_handler():
                 CallbackQueryHandler(handle_token_callback_query, pattern=r'^validity:')
             ]
         },
-        fallbacks=[
-            CommandHandler('cancel', cancel_token_operation),
-            CallbackQueryHandler(handle_token_callback_query, pattern=r'^(toggle_token:|delete_token:|confirm_delete:|cancel_delete)')
-        ],
-        allow_reentry=True
+        fallbacks=get_global_fallbacks(),
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
+        persistent=False
     )
-
-# create_token_callback_handler 函数已移除，所有callback处理已整合到ConversationHandler中
+    

@@ -5,11 +5,9 @@ from utils.api import call_danmaku_api
 from utils.permission import check_admin_permission
 from handlers.import_url import search_video_by_keyword
 from utils.rate_limit import should_block_by_rate_limit
+from utils.conversation_states import REFRESH_KEYWORD_INPUT, REFRESH_ANIME_SELECT, REFRESH_SOURCE_SELECT, REFRESH_EPISODE_INPUT
 
 logger = logging.getLogger(__name__)
-
-# 状态常量
-REFRESH_KEYWORD_INPUT, REFRESH_ANIME_SELECT, REFRESH_SOURCE_SELECT, REFRESH_EPISODE_INPUT = range(4)
 
 @check_admin_permission
 async def refresh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -617,10 +615,12 @@ async def show_library_selection(update: Update, context: ContextTypes.DEFAULT_T
 def create_refresh_handler():
     """创建刷新命令处理器"""
     from callback.refresh_sources import handle_refresh_callback_query
+    from utils.handlers_utils import wrap_conversation_entry_point
+    from utils.handlers_fallbacks import get_global_fallbacks
     
     return ConversationHandler(
         entry_points=[
-            CommandHandler('refresh', refresh_command)
+            CommandHandler('refresh', wrap_conversation_entry_point(refresh_command))
         ],
         states={
             REFRESH_KEYWORD_INPUT: [
@@ -641,8 +641,9 @@ def create_refresh_handler():
                 CallbackQueryHandler(handle_refresh_callback_query, pattern=r'^refresh_episodes_page_\d+$')
             ]
         },
-        fallbacks=[
-            CommandHandler('cancel', cancel_refresh)
-        ],
-        allow_reentry=True
+        fallbacks=get_global_fallbacks(),
+        per_chat=True,
+        per_user=True,
+        allow_reentry=True,
+        persistent=False
     )

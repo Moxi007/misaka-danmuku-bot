@@ -6,11 +6,9 @@ from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, MessageHandler, filters
 from utils.permission import check_user_permission, is_admin
 from utils.blacklist_config import add_blacklist_item, load_blacklist, get_blacklist_stats
+from utils.conversation_states import BLACKLIST_NAME_INPUT
 
 logger = logging.getLogger(__name__)
-
-# 对话状态常量
-BLACKLIST_NAME_INPUT = 0
 
 @check_user_permission
 async def blacklist_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -96,31 +94,27 @@ async def blacklist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     return ConversationHandler.END
 
-def create_blacklist_handler():    
-    """
-    创建黑名单管理ConversationHandler
-    """
+def create_blacklist_handler():
+    """创建黑名单管理对话处理器"""
     # 避免循环导入，在函数内部导入
-    from bot import _wrap_conversation_entry_point
-    from bot import _wrap_with_session_management
+    from utils.handlers_utils import wrap_conversation_entry_point
+    from utils.handlers_utils import wrap_with_session_management
+    from utils.handlers_fallbacks import get_global_fallbacks
     
     return ConversationHandler(
-        entry_points=[CommandHandler("blacklist", _wrap_conversation_entry_point(blacklist_command))],
+        entry_points=[CommandHandler("blacklist", wrap_conversation_entry_point(blacklist_command))],
         states={
             BLACKLIST_NAME_INPUT: [
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
-                    _wrap_with_session_management(blacklist_name_input)
-                )
+                    wrap_with_session_management(blacklist_name_input)
+                ),
+                CommandHandler("blacklist", wrap_conversation_entry_point(blacklist_command))
             ],
         },
-        fallbacks=[
-            CommandHandler("cancel", _wrap_with_session_management(blacklist_cancel)),
-            CommandHandler("start", _wrap_with_session_management(blacklist_cancel)),
-            CommandHandler("help", _wrap_with_session_management(blacklist_cancel)),
-            CommandHandler("search", _wrap_with_session_management(blacklist_cancel)),
-            CommandHandler("auto", _wrap_with_session_management(blacklist_cancel))
-        ],
+        fallbacks=get_global_fallbacks(),
         per_chat=True,
         per_user=True,
+        allow_reentry=True,
+        persistent=False
     )
