@@ -1,163 +1,75 @@
-name: 构建并推送Docker镜像
+# .github/workflows/docker-publish.yml
+name: Publish to Docker Hub
 
-# 触发条件：test分支推送代码、PR、Release发布或手动触发
+# 触发条件：
+# 1. 当推送到 'test' 分支时
+# 2. 当推送到 'beta' 分支时
+# 3. 当创建 'v*.*.*' 格式的标签时
 on:
   push:
-    branches: [test]
-    # 仅当以下文件修改时触发（避免无效构建）
-    paths:
-      - "*.py"
-      - "handlers/**"
-      - "callback/**"
-      - "utils/**"
-      - "app/**"
-      - "requirements.txt"
-      - "Dockerfile"
-      - ".github/workflows/docker-build.yml"
-  pull_request:
-    branches: [test]
-    paths:
-      - "*.py"
-      - "handlers/**"
-      - "callback/**"
-      - "utils/**"
-      - "app/**"
-      - "requirements.txt"
-      - "Dockerfile"
-      - ".github/workflows/docker-build.yml"
-  release:
-    types: [published] # 当创建新release时触发
-  workflow_dispatch:
-    inputs:
-      push_image:
-        description: "推送镜像"
-        default: true
-        type: boolean
-      no_cache:
-        description: "禁用缓存"
-        default: false
-        type: boolean
-      debug_build:
-        description: "调试模式"
-        default: false
-        type: boolean
+    branches:
+      - "test"
+      - "beta"
+    tags:
+      - "v*.*.*"
 
-# 环境变量
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
-# 并发控制：同一分支只允许一个构建任务运行
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-# 工作流任务
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest # 使用Ubuntu runner（支持多架构构建）
-    timeout-minutes: 30
-
-    # 权限配置（推送镜像需要的权限）
-    permissions:
-      contents: read
-      packages: write # 推送GHCR需要
-      id-token: write # 用于镜像签名（可选）
-      security-events: write # 用于安全扫描结果
-      actions: read # 用于缓存访问
-
+    # 在最新的 Ubuntu 虚拟机上运行
+    runs-on: ubuntu-latest
     steps:
-      # 步骤1：拉取GitHub仓库代码
-      - name: 拉取代码
+      # 步骤1: 检出代码，以便 workflow 可以访问它
+      - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # 拉取完整历史，用于生成版本标签
 
-      # 步骤2：设置QEMU（多架构支持）
-      - name: 设置QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: all
-
-      # 步骤3：环境准备
-      - name: 环境准备
+      # 步骤2: 准备 Docker 镜像标签
+      # 根据触发事件（分支或标签）动态生成镜像标签和平台
+      - name: Prepare Docker tags and platforms
+        id: prep
         run: |
-          docker system prune -f || true
-          docker builder prune -f || true
+          DOCKER_IMAGE=${{ secrets.DOCKERHUB_USERNAME }}/misaka_danmu_bot
+          # 默认构建所有平台
+          PLATFORMS="linux/amd64"
+          # 如果是标签推送 (e.g., v1.2.3)
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            # 从 ref 中提取标签名 (e.g., v1.2.3)
+            TAG=${GITHUB_REF#refs/tags/}
+            # 设置输出: "user/repo:v1.2.3,user/repo:latest"
+            echo "tags=${DOCKER_IMAGE}:${TAG},${DOCKER_IMAGE}:latest" >> $GITHUB_OUTPUT
+          # 如果是推送到 test 分支
+          elif [[ $GITHUB_REF == refs/heads/test ]]; then
+            # 设置输出: "user/repo:test"
+            echo "tags=${DOCKER_IMAGE}:test" >> $GITHUB_OUTPUT
+            # 仅为 test 分支构建 amd64
+            PLATFORMS="linux/amd64"
+          # 如果是推送到 beta 分支
+          elif [[ $GITHUB_REF == refs/heads/beta ]]; then
+            # 设置输出: "user/repo:beta"
+            echo "tags=${DOCKER_IMAGE}:beta" >> $GITHUB_OUTPUT
+          fi
+          echo "platforms=${PLATFORMS}" >> $GITHUB_OUTPUT
 
-      # 步骤4：设置Docker Buildx
-      - name: 设置Docker Buildx
+      # 步骤3: 设置 Docker Buildx
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 步骤5：登录GHCR
-      - name: 登录GHCR
-        if: github.event_name != 'pull_request' && (github.event.inputs.push_image == 'true' || github.event.inputs.push_image == true || github.event_name != 'workflow_dispatch')
+      # 步骤4: 登录到 Docker Hub
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 步骤6：提取镜像元数据
-      - name: 提取镜像元数据
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
-            type=ref,event=tag
-          labels: |
-            org.opencontainers.image.title=${{ github.repository }}
-            org.opencontainers.image.description=Telegram弹幕机器人
-            org.opencontainers.image.url=${{ github.event.repository.html_url }}
-            org.opencontainers.image.source=${{ github.event.repository.html_url }}
-            org.opencontainers.image.version=${{ github.ref_name }}
-            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.licenses=MIT
-
-      # 步骤7：构建并推送镜像
-      - name: 构建并推送镜像
-        id: build
-        timeout-minutes: 25
+      # 步骤5: 构建并推送 Docker 镜像
+      # 仅当上一步成功生成了标签时才运行此步骤
+      - name: Build and push Docker image
+        if: steps.prep.outputs.tags
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          platforms: ${{ (github.event.inputs.no_cache == 'true' || github.event.inputs.no_cache == true) && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
-          push: ${{ github.event_name != 'pull_request' && (github.event.inputs.push_image == 'true' || github.event.inputs.push_image == true || github.event_name != 'workflow_dispatch') }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          no-cache: ${{ github.event.inputs.no_cache == 'true' || github.event.inputs.no_cache == true }}
-          cache-from: ${{ !(github.event.inputs.no_cache == 'true' || github.event.inputs.no_cache == true) && 'type=gha' || '' }}
-          cache-to: ${{ !(github.event.inputs.no_cache == 'true' || github.event.inputs.no_cache == true) && 'type=gha,mode=max' || '' }}
-          pull: true
-          provenance: false
-
-      # 步骤8：构建重试
-      - name: 构建重试
-        if: failure() && steps.build.outcome == 'failure'
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' && (github.event.inputs.push_image == 'true' || github.event.inputs.push_image == true || github.event_name != 'workflow_dispatch') }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          no-cache: true
-          pull: true
-          provenance: false
-
-      # 步骤9：输出构建信息
-      - name: 输出构建信息
-        if: success()
-        run: |
-          echo "✅ 构建成功: ${{ steps.meta.outputs.tags }}"
-          echo "🔗 摘要: ${{ steps.build.outputs.digest }}"
+          platforms: ${{ steps.prep.outputs.platforms }}
+          push: true
+          tags: ${{ steps.prep.outputs.tags }}
+          secrets: |
+            XOR_KEY_SECRET=${{ secrets.XOR_KEY_SECRET }}
