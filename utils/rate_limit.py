@@ -47,7 +47,7 @@ def should_block_by_rate_limit() -> tuple[bool, Optional[int]]:
         # 如果全局限流已禁用，返回True表示应该阻止请求
         if not global_enabled:
             logger.info(f"🚫 全局限流已禁用，跳过操作流程")
-            return True, seconds_until_reset
+            return False, seconds_until_reset
         
         # 记录限流状态信息
         logger.info(f"✅ 全局限流状态：已启用 (当前请求数: {rate_limit_data.get('globalRequestCount', 0)}/{rate_limit_data.get('globalLimit', 0)})")
