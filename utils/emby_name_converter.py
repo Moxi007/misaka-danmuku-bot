@@ -154,7 +154,34 @@ def _parse_complex_rule(left_part: str, right_part: str, series_name: str, paren
             return None
             
         # 检查是否匹配目标剧集名称和季度
-        if series_name == target_title:
+        # 去除季度信息后进行完全匹配
+        # 支持多种季度格式：第X季、Season X、S0X、SX、季X、第X部
+        season_patterns = [
+            r'\s*第\d+季\s*',           # 第1季、第01季
+            r'\s*Season\s*\d+\s*',      # Season 1、Season1
+            r'\s*S\d+\s*',              # S1、S01
+            r'\s*季\d+\s*',             # 季1
+            r'\s*第\d+部\s*',           # 第1部、第01部
+            r'\s*Part\s*\d+\s*',        # Part 1、Part1
+            r'\s*\d+季\s*',             # 1季
+            r'\s*\d+部\s*',             # 1部
+            r'\s*Vol\.\s*\d+\s*',       # Vol.1、Vol. 1
+            r'\s*Volume\s*\d+\s*',      # Volume 1、Volume1
+        ]
+        
+        clean_series_name = series_name
+        clean_target_title = target_title
+        
+        # 逐个应用季度模式进行清理
+        for pattern in season_patterns:
+            clean_series_name = re.sub(pattern, '', clean_series_name, flags=re.IGNORECASE)
+            clean_target_title = re.sub(pattern, '', clean_target_title, flags=re.IGNORECASE)
+        
+        # 清理多余的空格和标点符号
+        clean_series_name = re.sub(r'\s+', ' ', clean_series_name).strip()
+        clean_target_title = re.sub(r'\s+', ' ', clean_target_title).strip()
+        
+        if clean_series_name == clean_target_title:
             # 解析季度偏移运算
             source_season = _parse_season_offset(season_offset, parent_index_number)
             if source_season is not None:

@@ -1268,6 +1268,7 @@ class WebhookHandler:
             import_params = {
                 "searchType": "tmdb",
                 "searchTerm": tmdb_id,
+                "mediaType": "movie",
                 "originalKeyword": f"TMDB ID: {tmdb_id}"  # 添加原始关键词用于识别词匹配
             }
             
@@ -1331,7 +1332,8 @@ class WebhookHandler:
                 import_params = {
                     "searchType": "keyword",
                     "searchTerm": converted_title,
-                    "originalKeyword": movie_title
+                    "originalKeyword": movie_title,
+                    "mediaType": "movie"
                 }
                 logger.info(f"🎯 使用关键词模式导入电影 (识别词匹配): {movie_title} -> {converted_title}")
             elif use_keyword_mode and movie_title:
@@ -1339,7 +1341,8 @@ class WebhookHandler:
                 import_params = {
                     "searchType": "keyword",
                     "searchTerm": movie_title,
-                    "originalKeyword": movie_title
+                    "originalKeyword": movie_title,
+                    "mediaType": "movie"
                 }
                 logger.info(f"🔄 TMDB详情获取失败，自动切换至关键字模式: {movie_title}")
             elif use_keyword_mode and not movie_title:
@@ -1351,6 +1354,7 @@ class WebhookHandler:
                 import_params = {
                     "searchType": provider_type,
                     "searchTerm": provider_id,
+                    "mediaType": "movie",
                     "originalKeyword": movie_title if movie_title else f"{provider_type.upper()} ID: {provider_id}"
                 }
                 logger.info(f"🚀 使用Provider模式导入电影: {provider_type.upper()} {provider_id}")
